@@ -4,9 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>rAIsing</title>
+    <script>
+      // Show runtime errors on the page instead of a silent white screen.
+      window.addEventListener('error', function (e) {
+        var d = document.createElement('pre');
+        d.style.cssText = 'color:#b00;padding:12px;white-space:pre-wrap;font:12px monospace';
+        d.textContent = 'Σφάλμα: ' + e.message + (e.filename ? '\n' + e.filename + ':' + e.lineno : '');
+        document.body.appendChild(d);
+      });
+    </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><p style="font-family:system-ui;padding:16px;color:#666">Φόρτωση rAIsing…</p></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

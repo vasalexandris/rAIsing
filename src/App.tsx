@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Grid, type Actions } from './Grid';
 import { makeDemo } from './demo';
+import { parseClaudeCode } from './claudeCode';
 import { download, newConversation, parseJSON, parseTranscript, safeName, toJSON, toMarkdown } from './io';
 import { idbGet, idbSet } from './storage';
 import { SOURCES, uid, type Conversation, type Persisted, type Role } from './types';
@@ -215,10 +216,21 @@ function NewDialog({ onClose, onCreate }: { onClose(): void; onCreate(c: Convers
     );
   };
 
+  const [tools, setTools] = useState(false);
+
   const importFile = async (file: File | undefined) => {
     if (!file) return;
     try {
       onCreate(parseJSON(await file.text()));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Αποτυχία εισαγωγής.');
+    }
+  };
+
+  const importClaudeCode = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    try {
+      for (const f of Array.from(files)) onCreate(parseClaudeCode(await f.text(), { tools }));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Αποτυχία εισαγωγής.');
     }
@@ -259,6 +271,24 @@ function NewDialog({ onClose, onCreate }: { onClose(): void; onCreate(c: Convers
           Αναγνωρίζονται ετικέτες στην αρχή γραμμής: Εγώ / Χρήστης / User / Human και Claude / ΑΙ / Assistant / Gemini / GLM /
           ChatGPT.
         </p>
+        <fieldset className="cc">
+          <legend>Εισαγωγή από Claude Code</legend>
+          <p className="hint">
+            Διάλεξε ένα ή περισσότερα αρχεία <code>.jsonl</code> από τον φάκελο <code>~/.claude/projects/&lt;έργο&gt;/</code> (Windows:{' '}
+            <code>%USERPROFILE%\.claude\projects</code>). Οι διακλαδώσεις (rewind/fork) γίνονται στήλες και μετά από compact η συζήτηση
+            συνεχίζεται στην ίδια στήλη.
+          </p>
+          <div className="cc-row">
+            <label className="check">
+              <input type="checkbox" checked={tools} onChange={(e) => setTools(e.target.checked)} />
+              Να περιλαμβάνονται τα tool calls και τα αποτελέσματά τους
+            </label>
+            <label className="file">
+              Επιλογή αρχείων .jsonl
+              <input type="file" multiple accept=".jsonl,.json,application/x-ndjson" onChange={(e) => void importClaudeCode(e.target.files)} />
+            </label>
+          </div>
+        </fieldset>
         {error && <p className="error">{error}</p>}
         <div className="dialog-actions">
           <label className="file">
