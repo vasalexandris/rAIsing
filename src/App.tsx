@@ -1,8 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Grid, type Actions } from './Grid';
 import { makeDemo } from './demo';
 import { parseClaudeCode } from './claudeCode';
-import { download, newConversation, parseJSON, parseTranscript, safeName, toJSON, toMarkdown } from './io';
+import {
+  download,
+  mergeImported,
+  newConversation,
+  normalizeConversation,
+  parseJSON,
+  parseTranscript,
+  safeName,
+  toJSON,
+  toMarkdown,
+} from './io';
 import { idbGet, idbSet } from './storage';
 import { SOURCES, uid, type Conversation, type Persisted, type Role } from './types';
 
@@ -13,6 +23,11 @@ export default function App() {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
   const [dialog, setDialog] = useState(false);
+  const [ext, setExt] = useState(false);
+  const convsRef = useRef<Conversation[]>([]);
+  const readyRef = useRef(false);
+  convsRef.current = convs;
+  readyRef.current = ready;
 
   useEffect(() => {
     (async () => {
@@ -32,6 +47,46 @@ export default function App() {
       setReady(true);
     })();
   }, []);
+
+  // Bridge to the browser extension (captures from claude.ai arrive as postMessage events)
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.source !== window || e.data?.source !== 'raising-extension') return;
+      if (e.data.type === 'hello') setExt(true);
+      if (e.data.type !== 'import' || !Array.isArray(e.data.conversations)) return;
+      if (!readyRef.current) return; // stays pending in the extension; re-sent after 'ready'
+      const incoming: Conversation[] = [];
+      for (const raw of e.data.conversations) {
+        try {
+          incoming.push(normalizeConversation(raw));
+        } catch {
+          /* ignore malformed capture */
+        }
+      }
+      if (incoming.length === 0) return;
+      const last = incoming[incoming.length - 1];
+      const existing = convsRef.current.find((c) => c.externalId && c.externalId === last.externalId);
+      setConvs((cs) => {
+        let next = cs;
+        for (const inc of incoming) {
+          const i = inc.externalId ? next.findIndex((c) => c.externalId === inc.externalId) : -1;
+          next = i >= 0 ? next.map((c, j) => (j === i ? mergeImported(c, inc) : c)) : [inc, ...next];
+        }
+        return next;
+      });
+      setActiveId(existing?.id ?? last.id);
+      window.postMessage(
+        { source: 'raising-app', type: 'ack', externalIds: incoming.map((c) => c.externalId).filter(Boolean) },
+        location.origin,
+      );
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  useEffect(() => {
+    if (ready) window.postMessage({ source: 'raising-app', type: 'ready' }, location.origin);
+  }, [ready]);
 
   useEffect(() => {
     if (!ready) return;
@@ -157,6 +212,19 @@ export default function App() {
             </li>
           ))}
         </ul>
+        <details className="ext">
+          <summary>{ext ? '● Extension συνδεδεμένο' : 'Extension για claude.ai'}</summary>
+          <ol>
+            <li>
+              Κατέβασε το <a href="./raising-extension.zip">raising-extension.zip</a> και αποσυμπίεσέ το.
+            </li>
+            <li>
+              Chrome → <code>chrome://extensions</code> → ενεργοποίηση «Λειτουργία προγραμματιστή».
+            </li>
+            <li>«Φόρτωση αποσυμπιεσμένου» → διάλεξε τον φάκελο.</li>
+            <li>Σε μια συζήτηση στο claude.ai πάτα το κουμπί ⬆ rAIsing κάτω δεξιά.</li>
+          </ol>
+        </details>
         <p className="note">Τα δεδομένα μένουν μόνο στον browser σου. Κράτα αντίγραφο με Εξαγωγή.</p>
       </aside>
 

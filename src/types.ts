@@ -25,6 +25,8 @@ export interface Conversation {
   title: string;
   source: string;
   url?: string;
+  /** id of the conversation in the source system (claude.ai, Claude Code session) */
+  externalId?: string;
   createdAt: number;
   updatedAt: number;
   branches: Branch[];

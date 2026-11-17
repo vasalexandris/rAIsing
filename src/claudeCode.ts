@@ -1,5 +1,5 @@
-import { newConversation } from './io';
-import { MAIN, uid, type Branch, type Conversation, type Msg, type Role } from './types';
+import { clip, treeToConversation, type TreeNode } from './tree';
+import type { Conversation, Role } from './types';
 
 /**
  * Importer for Claude Code session transcripts (~/.claude/projects/<project>/<session>.jsonl).
@@ -26,23 +26,14 @@ interface Raw {
   isCompactSummary?: boolean;
   timestamp?: string;
   summary?: string;
+  sessionId?: string;
   message?: { role?: string; content?: string | Block[] };
 }
-interface Node {
-  id: string;
-  role: Role;
-  text: string;
-  ts: number;
-  parent: string | null;
-  children: string[];
-}
-
 export interface CCOptions {
   /** fold tool calls/results into the AI message of the same turn */
   tools: boolean;
 }
 
-const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n).trimEnd() + '…' : s);
 const stripReminders = (s: string) => s.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim();
 
 function inputSummary(input: unknown): string {
@@ -127,7 +118,7 @@ export function parseClaudeCode(raw: string, opts: CCOptions): Conversation {
   // 1) kept nodes
   const rawById = new Map<string, Raw>();
   for (const e of entries) if (e.uuid) rawById.set(e.uuid, e);
-  const nodes = new Map<string, Node>();
+  const nodes = new Map<string, TreeNode>();
   let seq = 0;
   for (const e of entries) {
     seq++;
@@ -150,10 +141,10 @@ export function parseClaudeCode(raw: string, opts: CCOptions): Conversation {
   // 3) roots after the first (e.g. after /compact) continue from the last message that came before them
   const byTs = [...nodes.values()].sort((a, b) => a.ts - b.ts);
   const roots = byTs.filter((n) => n.parent === null);
-  const orphanRoots: Node[] = [];
+  const orphanRoots: TreeNode[] = [];
   roots.forEach((r, i) => {
     if (i === 0) return;
-    let best: Node | null = null;
+    let best: TreeNode | null = null;
     for (const c of byTs) {
       if (c.ts >= r.ts) break;
       if (c.id !== r.id) best = c;
@@ -165,75 +156,15 @@ export function parseClaudeCode(raw: string, opts: CCOptions): Conversation {
   for (const n of byTs) if (n.parent) nodes.get(n.parent)!.children.push(n.id);
   const mainRoot = roots[0];
 
-  // 4) fold consecutive AI entries of one turn into a single cell
-  const stack: string[] = roots.filter((r) => r === mainRoot || orphanRoots.includes(r)).map((r) => r.id);
-  while (stack.length) {
-    const p = nodes.get(stack.pop()!)!;
-    while (p.children.length === 1) {
-      const c = nodes.get(p.children[0])!;
-      if (p.role !== 'ai' || c.role !== 'ai') break;
-      p.text += '\n\n' + c.text;
-      p.children = c.children;
-      for (const gc of p.children) nodes.get(gc)!.parent = p.id;
-      nodes.delete(c.id);
-    }
-    for (const id of p.children) stack.push(id);
-  }
-
-  // 5) latest timestamp inside every subtree (decides which child continues the "main" line)
-  const subMax = new Map<string, number>();
-  const order: string[] = [];
-  const st: string[] = [...nodes.values()].filter((n) => n.parent === null).map((n) => n.id);
-  while (st.length) {
-    const id = st.pop()!;
-    order.push(id);
-    for (const c of nodes.get(id)!.children) st.push(c);
-  }
-  for (let i = order.length - 1; i >= 0; i--) {
-    const n = nodes.get(order[i])!;
-    subMax.set(n.id, Math.max(n.ts, ...n.children.map((c) => subMax.get(c) ?? 0)));
-  }
-
-  // 6) emit branches
+  const sessionId = entries.find((e) => e.sessionId)?.sessionId;
   const title =
     entries.find((e) => e.type === 'summary' && e.summary)?.summary ??
     clip((nodes.get(mainRoot.id)?.text ?? 'Claude Code').replace(/\s+/g, ' '), 70);
-  const conv = newConversation(title, 'claude-code');
-  const messages: Msg[] = [];
-  const branches: Branch[] = [...conv.branches];
-
-  const emit = (startId: string, branchId: string) => {
-    let cur: Node | undefined = nodes.get(startId);
-    while (cur) {
-      messages.push({ id: cur.id, branchId, role: cur.role, text: cur.text, createdAt: cur.ts });
-      if (cur.children.length === 0) break;
-      const kids = cur.children.map((id) => nodes.get(id)!).sort((a, b) => (subMax.get(b.id)! - subMax.get(a.id)!) || b.ts - a.ts);
-      const [next, ...others] = kids;
-      for (const o of others) {
-        const b: Branch = {
-          id: uid(),
-          parentBranchId: branchId,
-          forkMsgId: cur.id,
-          title: clip(o.text.replace(/\s+/g, ' '), 60),
-          createdAt: o.ts,
-        };
-        branches.push(b);
-        emit(o.id, b.id);
-      }
-      cur = next;
-    }
-  };
-
-  emit(mainRoot.id, MAIN);
-  for (const o of orphanRoots) {
-    const b: Branch = { id: uid(), parentBranchId: MAIN, forkMsgId: null, title: clip(o.text.replace(/\s+/g, ' '), 60), createdAt: o.ts };
-    branches.push(b);
-    emit(o.id, b.id);
-  }
-
-  conv.branches = branches;
-  conv.messages = messages;
-  conv.createdAt = byTs[0].ts;
-  conv.updatedAt = Date.now();
-  return conv;
+  return treeToConversation(nodes, {
+    title,
+    source: 'claude-code',
+    externalId: sessionId ? `claude-code:${sessionId}` : undefined,
+    mainRoot: mainRoot.id,
+    orphanRoots: orphanRoots.map((r) => r.id),
+  });
 }

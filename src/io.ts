@@ -36,7 +36,11 @@ export function toMarkdown(c: Conversation): string {
 /** Validate & normalise an imported rAIsing JSON file. Throws on bad input. */
 export function parseJSON(text: string): Conversation {
   const raw = JSON.parse(text);
-  const c = raw?.conversation ?? raw;
+  return normalizeConversation(raw?.conversation ?? raw);
+}
+
+/** Validate an untrusted conversation object (file or extension) and give it a fresh local id. */
+export function normalizeConversation(c: any): Conversation {
   if (!c || !Array.isArray(c.branches) || !Array.isArray(c.messages)) {
     throw new Error('Το αρχείο δεν είναι έγκυρη συζήτηση rAIsing.');
   }
@@ -63,6 +67,7 @@ export function parseJSON(text: string): Conversation {
     title: String(c.title ?? 'Εισαγωγή'),
     source: String(c.source ?? 'άλλο'),
     url: c.url ? String(c.url) : undefined,
+    externalId: c.externalId ? String(c.externalId) : undefined,
     createdAt: Number(c.createdAt) || Date.now(),
     updatedAt: Date.now(),
     branches,
@@ -116,5 +121,32 @@ export function newConversation(title: string, source: string, url?: string, mes
     updatedAt: now,
     branches: [{ id: MAIN, parentBranchId: null, forkMsgId: null, title: 'Κύρια συζήτηση', createdAt: now }],
     messages,
+  };
+}
+
+/**
+ * Re-import of a conversation that already exists locally (same externalId):
+ * structure and new messages come from the source, local-only additions are kept.
+ */
+export function mergeImported(existing: Conversation, incoming: Conversation): Conversation {
+  const oldText = new Map(existing.messages.map((m) => [m.id, m.text]));
+  const incomingIds = new Set(incoming.messages.map((m) => m.id));
+  const incomingBranchIds = new Set(incoming.branches.map((b) => b.id));
+  const isLocalBranch = (b: Branch) => !b.id.startsWith('ext:') && b.id !== MAIN && !incomingBranchIds.has(b.id);
+
+  const keptLocalBranches = existing.branches.filter(isLocalBranch);
+  const branchIds = new Set([...incomingBranchIds, ...keptLocalBranches.map((b) => b.id)]);
+  const messages: Msg[] = [
+    // keep local edits of text, but take position (branch) from the source
+    ...incoming.messages.map((m) => ({ ...m, text: oldText.get(m.id) ?? m.text })),
+    // messages added by hand
+    ...existing.messages.filter((m) => !incomingIds.has(m.id) && branchIds.has(m.branchId)),
+  ];
+  return {
+    ...existing,
+    url: incoming.url ?? existing.url,
+    branches: [...incoming.branches, ...keptLocalBranches],
+    messages,
+    updatedAt: Date.now(),
   };
 }

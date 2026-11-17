@@ -55,6 +55,20 @@ export function computeLayout(c: Conversation): Layout {
   const resolving = new Set<string>();
   const forkCount = new Map<string, number>();
 
+  // Several branches can fork from the same message: the first keeps "3.1…", later ones become "3b.1…", "3c.1…"
+  // (by creation order, so existing labels never change when a branch is added).
+  const siblingIndex = new Map<string, number>();
+  const perFork = new Map<string, Branch[]>();
+  for (const b of c.branches) {
+    if (!b.forkMsgId) continue;
+    perFork.set(b.forkMsgId, [...(perFork.get(b.forkMsgId) ?? []), b]);
+  }
+  for (const list of perFork.values()) {
+    list.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    list.forEach((b, i) => siblingIndex.set(b.id, i));
+  }
+  const suffix = (i: number) => (i === 0 ? '' : i < 26 ? String.fromCharCode(97 + i) : String(i + 1));
+
   const resolve = (b: Branch): { numbers: string[]; startRow: number } => {
     const done = info.get(b.id);
     if (done) return done;
@@ -67,7 +81,7 @@ export function computeLayout(c: Conversation): Layout {
       if (fork) {
         const parent = branchById.get(fork.branchId);
         if (parent && parent.id !== b.id) resolve(parent);
-        prefix = (numberOf.get(fork.id) ?? '') + '.';
+        prefix = (numberOf.get(fork.id) ?? '') + suffix(siblingIndex.get(b.id) ?? 0) + '.';
         startRow = (rowOf.get(fork.id) ?? 0) + 1;
       }
       resolving.delete(b.id);

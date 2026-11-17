@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "rAIsing – σύνδεση με claude.ai",
+  "version": "0.1.0",
+  "description": "Στείλε τη συζήτηση του claude.ai (με τις διακλαδώσεις της) στο rAIsing.",
+  "permissions": ["storage", "unlimitedStorage"],
+  "host_permissions": ["https://vasalexandris.github.io/rAIsing/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://claude.ai/*"],
+      "js": ["claude.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://vasalexandris.github.io/rAIsing/*", "http://localhost/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
