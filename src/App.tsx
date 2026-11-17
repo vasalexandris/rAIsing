@@ -24,6 +24,7 @@ export default function App() {
   const [query, setQuery] = useState('');
   const [dialog, setDialog] = useState(false);
   const [ext, setExt] = useState(false);
+  const [notice, setNotice] = useState('');
   const convsRef = useRef<Conversation[]>([]);
   const readyRef = useRef(false);
   convsRef.current = convs;
@@ -75,6 +76,8 @@ export default function App() {
         return next;
       });
       setActiveId(existing?.id ?? last.id);
+      setNotice(`✓ Εισήχθη από το extension: ${last.title} (${last.messages.length} μην., ${last.branches.length - 1} διακλ.)`);
+      setTimeout(() => setNotice(''), 8000);
       window.postMessage(
         { source: 'raising-app', type: 'ack', externalIds: incoming.map((c) => c.externalId).filter(Boolean) },
         location.origin,
@@ -212,6 +215,7 @@ export default function App() {
             </li>
           ))}
         </ul>
+        {notice && <p className="notice">{notice}</p>}
         <details className="ext">
           <summary>{ext ? '● Extension συνδεδεμένο' : 'Extension για claude.ai'}</summary>
           <ol>

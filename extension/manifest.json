@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "rAIsing – σύνδεση με claude.ai",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Στείλε τη συζήτηση του claude.ai (με τις διακλαδώσεις της) στο rAIsing.",
   "permissions": ["storage", "unlimitedStorage"],
   "host_permissions": ["https://vasalexandris.github.io/rAIsing/*"],

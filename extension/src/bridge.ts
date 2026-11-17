@@ -21,6 +21,12 @@ window.addEventListener('message', async (e) => {
   }
 });
 
+// lets the background script check that this page was loaded after the extension was installed
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === 'ping') sendResponse({ ok: true });
+  return false;
+});
+
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.pending) void flush();
 });
