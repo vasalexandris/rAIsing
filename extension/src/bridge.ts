@@ -14,6 +14,8 @@ window.addEventListener('message', async (e) => {
   if (e.data.type === 'ready') {
     post({ type: 'hello' });
     await flush();
+  } else if (e.data.type === 'index' && Array.isArray(e.data.conversations)) {
+    await chrome.storage.local.set({ index: e.data.conversations });
   } else if (e.data.type === 'ack') {
     const done: string[] = Array.isArray(e.data.externalIds) ? e.data.externalIds : [];
     const pending = await getPending();

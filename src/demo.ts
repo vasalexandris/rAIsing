@@ -4,7 +4,7 @@ import { newConversation } from './io';
 /** A small example conversation so the grid layout is visible on first launch. */
 export function makeDemo(): Conversation {
   const c = newConversation('Παράδειγμα: από πού ξεκινήσαμε;', 'claude.ai');
-  const t0 = Date.now() - 60_000;
+  const t0 = Date.now() - 3_600_000;
   let n = 0;
   const msg = (branchId: string, role: Role, text: string): Msg => {
     const m: Msg = { id: uid(), branchId, role, text, createdAt: t0 + n++ * 1000 };

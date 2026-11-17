@@ -183,3 +183,13 @@ code { background: var(--num); padding: 0 4px; border-radius: 4px; font-size: 12
 .ext a { color: var(--accent); }
 
 .notice { margin: 0; padding: 6px 8px; border-radius: 6px; background: var(--user); font-size: 12px; }
+
+.pick { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+.pick li { display: flex; gap: 8px; padding: 4px 8px; cursor: pointer; border-bottom: 1px solid var(--line); align-items: baseline; }
+.pick li:hover { background: var(--num); }
+.pick li.sel { background: var(--user); outline: 2px solid var(--accent); outline-offset: -2px; }
+.pick .pn { width: 44px; flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pick .pr { width: 22px; flex: none; font-size: 11px; font-weight: 700; color: var(--muted); }
+.pick .pt { min-width: 0; }
+.pick .none { color: var(--muted); cursor: default; }
+button:disabled { opacity: 0.5; cursor: default; }

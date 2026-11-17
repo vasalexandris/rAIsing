@@ -2,9 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Grid, type Actions } from './Grid';
 import { makeDemo } from './demo';
 import { parseClaudeCode } from './claudeCode';
+import { computeLayout } from './layout';
+import { clip } from './tree';
 import {
+  applyImports,
   download,
-  mergeImported,
+  linkAsBranch,
   newConversation,
   normalizeConversation,
   parseJSON,
@@ -12,6 +15,8 @@ import {
   safeName,
   toJSON,
   toMarkdown,
+  unlinkBranch,
+  type Incoming,
 } from './io';
 import { idbGet, idbSet } from './storage';
 import { SOURCES, uid, type Conversation, type Persisted, type Role } from './types';
@@ -25,6 +30,7 @@ export default function App() {
   const [dialog, setDialog] = useState(false);
   const [ext, setExt] = useState(false);
   const [notice, setNotice] = useState('');
+  const [linking, setLinking] = useState(false);
   const convsRef = useRef<Conversation[]>([]);
   const readyRef = useRef(false);
   convsRef.current = convs;
@@ -56,30 +62,35 @@ export default function App() {
       if (e.data.type === 'hello') setExt(true);
       if (e.data.type !== 'import' || !Array.isArray(e.data.conversations)) return;
       if (!readyRef.current) return; // stays pending in the extension; re-sent after 'ready'
-      const incoming: Conversation[] = [];
+      const items: Incoming[] = [];
       for (const raw of e.data.conversations) {
         try {
-          incoming.push(normalizeConversation(raw));
+          const lt = raw?.linkTo;
+          items.push({
+            conv: normalizeConversation(raw),
+            linkTo:
+              lt && typeof lt.convId === 'string' && typeof lt.forkMsgId === 'string'
+                ? { convId: lt.convId, forkMsgId: lt.forkMsgId }
+                : undefined,
+          });
         } catch {
           /* ignore malformed capture */
         }
       }
-      if (incoming.length === 0) return;
-      const last = incoming[incoming.length - 1];
-      const existing = convsRef.current.find((c) => c.externalId && c.externalId === last.externalId);
-      setConvs((cs) => {
-        let next = cs;
-        for (const inc of incoming) {
-          const i = inc.externalId ? next.findIndex((c) => c.externalId === inc.externalId) : -1;
-          next = i >= 0 ? next.map((c, j) => (j === i ? mergeImported(c, inc) : c)) : [inc, ...next];
-        }
-        return next;
-      });
-      setActiveId(existing?.id ?? last.id);
-      setNotice(`✓ Εισήχθη από το extension: ${last.title} (${last.messages.length} μην., ${last.branches.length - 1} διακλ.)`);
+      if (items.length === 0) return;
+      const res = applyImports(convsRef.current, items);
+      convsRef.current = res.convs;
+      setConvs(res.convs);
+      setActiveId(res.activeId);
+      setOpen(new Set());
+      const last = items[items.length - 1];
+      const asBranch = res.convs
+        .find((c) => c.id === res.activeId)
+        ?.branches.some((br) => br.externalId && br.externalId === last.conv.externalId);
+      setNotice(`✓ Εισήχθη από το extension: ${last.conv.title} (${last.conv.messages.length} μην.)${asBranch ? ' · ως διακλάδωση' : ''}`);
       setTimeout(() => setNotice(''), 8000);
       window.postMessage(
-        { source: 'raising-app', type: 'ack', externalIds: incoming.map((c) => c.externalId).filter(Boolean) },
+        { source: 'raising-app', type: 'ack', externalIds: items.map((i) => i.conv.externalId).filter(Boolean) },
         location.origin,
       );
     };
@@ -90,6 +101,29 @@ export default function App() {
   useEffect(() => {
     if (ready) window.postMessage({ source: 'raising-app', type: 'ready' }, location.origin);
   }, [ready]);
+
+  // Give the extension a light index so the claude.ai button can offer "branch of …" targets
+  useEffect(() => {
+    if (!ready) return;
+    const t = setTimeout(() => {
+      const conversations = [...convs]
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, 50)
+        .filter((c) => c.messages.length > 0)
+        .map((c) => ({
+          id: c.id,
+          title: c.title,
+          externalId: c.externalId,
+          linkedExternalIds: c.branches.map((b) => b.externalId).filter(Boolean),
+          updatedAt: c.updatedAt,
+          messages: computeLayout(c).cols.flatMap((col) =>
+            col.msgs.map((m, i) => ({ id: m.id, num: col.numbers[i], role: m.role, snippet: clip(m.text.replace(/\s+/g, ' '), 70) })),
+          ),
+        }));
+      window.postMessage({ source: 'raising-app', type: 'index', conversations }, location.origin);
+    }, 800);
+    return () => clearTimeout(t);
+  }, [convs, ready]);
 
   useEffect(() => {
     if (!ready) return;
@@ -133,6 +167,15 @@ export default function App() {
         if (title === null) return;
         update((c) => ({ ...c, branches: c.branches.map((b) => (b.id === id ? { ...b, title: title.trim() } : b)) }));
       },
+      unlinkBranch: (id: string) => {
+        if (!window.confirm('Να γίνει η διακλάδωση ξεχωριστή συζήτηση;')) return;
+        setConvs((cs) => {
+          const host = cs.find((c) => c.id === activeId);
+          if (!host) return cs;
+          const r = unlinkBranch(host, id);
+          return [r.child, ...cs.map((c) => (c.id === host.id ? r.host : c))];
+        });
+      },
       deleteBranch: (id: string) => {
         if (!window.confirm('Διαγραφή της διακλάδωσης και όλων των μηνυμάτων της;')) return;
         update((c) => {
@@ -158,6 +201,23 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeId, conv],
   );
+
+  const link = (parentId: string, forkMsgId: string) => {
+    if (!conv) return;
+    const host = convs.find((c) => c.id === parentId);
+    if (!host) return;
+    try {
+      const merged = linkAsBranch(host, conv, forkMsgId);
+      setConvs((cs) => cs.filter((c) => c.id !== conv.id).map((c) => (c.id === parentId ? merged : c)));
+      setActiveId(parentId);
+      setOpen(new Set());
+      setLinking(false);
+      setNotice(`✓ «${conv.title}» συνδέθηκε ως διακλάδωση`);
+      setTimeout(() => setNotice(''), 8000);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : 'Αποτυχία σύνδεσης.');
+    }
+  };
 
   const toggle = (id: string) =>
     setOpen((s) => {
@@ -245,6 +305,13 @@ export default function App() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
+              <button
+                disabled={convs.filter((c) => c.id !== conv.id && c.messages.length > 0).length === 0}
+                title="Μετέτρεψε αυτή τη συζήτηση σε διακλάδωση άλλης"
+                onClick={() => setLinking(true)}
+              >
+                ⑂ Σύνδεση ως διακλάδωση…
+              </button>
               <button onClick={() => setOpen(new Set(conv.messages.map((m) => m.id)))}>Ανάπτυξη όλων</button>
               <button onClick={() => setOpen(new Set())}>Σύμπτυξη όλων</button>
               <button onClick={() => download(`${safeName(conv.title)}.json`, toJSON(conv), 'application/json')}>
@@ -269,6 +336,14 @@ export default function App() {
       </main>
 
       {dialog && <NewDialog onClose={() => setDialog(false)} onCreate={addConv} />}
+      {linking && conv && (
+        <LinkDialog
+          child={conv}
+          others={convs.filter((c) => c.id !== conv.id && c.messages.length > 0)}
+          onClose={() => setLinking(false)}
+          onLink={link}
+        />
+      )}
     </div>
   );
 }
@@ -371,6 +446,84 @@ function NewDialog({ onClose, onCreate }: { onClose(): void; onCreate(c: Convers
           <button onClick={onClose}>Άκυρο</button>
           <button className="primary" onClick={create}>
             Δημιουργία
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LinkDialog({
+  child,
+  others,
+  onClose,
+  onLink,
+}: {
+  child: Conversation;
+  others: Conversation[];
+  onClose(): void;
+  onLink(parentId: string, forkMsgId: string): void;
+}) {
+  const sorted = useMemo(() => [...others].sort((a, b) => b.updatedAt - a.updatedAt), [others]);
+  const [parentId, setParentId] = useState(sorted[0]?.id ?? '');
+  const [filter, setFilter] = useState('');
+  const [sel, setSel] = useState('');
+  const parent = sorted.find((c) => c.id === parentId);
+
+  const rows = useMemo(() => {
+    if (!parent) return [];
+    return computeLayout(parent).cols.flatMap((col) =>
+      col.msgs.map((m, i) => ({ id: m.id, num: col.numbers[i], role: m.role, text: m.text.replace(/\s+/g, ' '), main: col.branch.id === 'main' })),
+    );
+  }, [parent]);
+
+  // default fork point: the last message of the main thread
+  useEffect(() => {
+    const main = rows.filter((r) => r.main);
+    setSel(main[main.length - 1]?.id ?? rows[0]?.id ?? '');
+    setFilter('');
+  }, [rows]);
+
+  const f = filter.trim().toLowerCase();
+  const shown = rows.filter((r) => !f || r.num.toLowerCase() === f || r.text.toLowerCase().includes(f)).slice(0, 300);
+
+  return (
+    <div className="backdrop" onClick={onClose}>
+      <div className="dialog" onClick={(e) => e.stopPropagation()}>
+        <h2>Σύνδεση ως διακλάδωση</h2>
+        <p className="hint">
+          Η συζήτηση «{child.title}» θα γίνει στήλη διακλάδωσης μέσα σε άλλη συζήτηση, από το μήνυμα που θα διαλέξεις. Αν την ξαναστείλεις από το
+          claude.ai, θα ενημερώνεται στη θέση της.
+        </p>
+        <label>
+          Είναι διακλάδωση της συζήτησης
+          <select value={parentId} onChange={(e) => setParentId(e.target.value)}>
+            {sorted.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.title} ({c.messages.length} μην.)
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Από ποιο μήνυμα ξεκίνησε (αριθμός ή αναζήτηση)
+          <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="π.χ. 12 ή μια λέξη από το μήνυμα" />
+        </label>
+        <ul className="pick">
+          {shown.map((r) => (
+            <li key={r.id} className={r.id === sel ? 'sel' : ''} onClick={() => setSel(r.id)}>
+              <span className="pn">{r.num}</span>
+              <span className="pr">{r.role === 'user' ? 'Εγώ' : 'ΑΙ'}</span>
+              <span className="pt">{clip(r.text, 110)}</span>
+            </li>
+          ))}
+          {shown.length === 0 && <li className="none">Κανένα μήνυμα</li>}
+        </ul>
+        <div className="dialog-actions">
+          <span className="spacer" />
+          <button onClick={onClose}>Άκυρο</button>
+          <button className="primary" disabled={!sel} onClick={() => onLink(parentId, sel)}>
+            Σύνδεση
           </button>
         </div>
       </div>

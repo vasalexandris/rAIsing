@@ -50,6 +50,9 @@ export function normalizeConversation(c: any): Conversation {
     forkMsgId: b.forkMsgId ?? null,
     title: String(b.title ?? ''),
     createdAt: Number(b.createdAt) || Date.now(),
+    externalId: b.externalId ? String(b.externalId) : undefined,
+    source: b.source ? String(b.source) : undefined,
+    url: b.url ? String(b.url) : undefined,
   }));
   if (!branches.some((b) => b.parentBranchId === null)) throw new Error('Λείπει η κύρια συζήτηση.');
   const ids = new Set(branches.map((b) => b.id));
@@ -124,29 +127,189 @@ export function newConversation(title: string, source: string, url?: string, mes
   };
 }
 
-/**
- * Re-import of a conversation that already exists locally (same externalId):
- * structure and new messages come from the source, local-only additions are kept.
- */
-export function mergeImported(existing: Conversation, incoming: Conversation): Conversation {
-  const oldText = new Map(existing.messages.map((m) => [m.id, m.text]));
-  const incomingIds = new Set(incoming.messages.map((m) => m.id));
-  const incomingBranchIds = new Set(incoming.branches.map((b) => b.id));
-  const isLocalBranch = (b: Branch) => !b.id.startsWith('ext:') && b.id !== MAIN && !incomingBranchIds.has(b.id);
+interface Sets {
+  branches: Branch[];
+  messages: Msg[];
+}
 
-  const keptLocalBranches = existing.branches.filter(isLocalBranch);
-  const branchIds = new Set([...incomingBranchIds, ...keptLocalBranches.map((b) => b.id)]);
-  const messages: Msg[] = [
-    // keep local edits of text, but take position (branch) from the source
-    ...incoming.messages.map((m) => ({ ...m, text: oldText.get(m.id) ?? m.text })),
-    // messages added by hand
-    ...existing.messages.filter((m) => !incomingIds.has(m.id) && branchIds.has(m.branchId)),
-  ];
+/**
+ * Core of every re-import: structure and new messages come from the source,
+ * local additions (own messages, own branches, linked conversations) survive.
+ */
+function mergeSets(existing: Sets, incoming: Sets, rootId: string): Sets {
+  const oldText = new Map(existing.messages.map((m) => [m.id, m.text]));
+  const incomingMsgIds = new Set(incoming.messages.map((m) => m.id));
+  const incomingBranchIds = new Set(incoming.branches.map((b) => b.id));
+  const local = existing.branches.filter((b) => b.id !== rootId && !b.id.startsWith('ext:') && !incomingBranchIds.has(b.id));
+  const alive = new Set([...incomingBranchIds, ...local.map((b) => b.id)]);
+  // a kept branch whose parent disappeared moves under the root so it never becomes invisible
+  const kept = local.map((b) => (b.parentBranchId && alive.has(b.parentBranchId) ? b : { ...b, parentBranchId: rootId }));
   return {
-    ...existing,
-    url: incoming.url ?? existing.url,
-    branches: [...incoming.branches, ...keptLocalBranches],
-    messages,
+    branches: [...incoming.branches, ...kept],
+    messages: [
+      // keep local edits of text, but take the position (branch) from the source
+      ...incoming.messages.map((m) => ({ ...m, text: oldText.get(m.id) ?? m.text })),
+      ...existing.messages.filter((m) => !incomingMsgIds.has(m.id) && alive.has(m.branchId)),
+    ],
+  };
+}
+
+/** Re-import of a conversation that already exists locally (same externalId). */
+export function mergeImported(existing: Conversation, incoming: Conversation): Conversation {
+  const merged = mergeSets(existing, incoming, MAIN);
+  return { ...existing, url: incoming.url ?? existing.url, ...merged, updatedAt: Date.now() };
+}
+
+function subtreeIds(branches: Branch[], rootId: string): Set<string> {
+  const out = new Set([rootId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const b of branches) {
+      if (!out.has(b.id) && b.parentBranchId && out.has(b.parentBranchId)) {
+        out.add(b.id);
+        grew = true;
+      }
+    }
+  }
+  return out;
+}
+
+/** Put a whole conversation under `root`: its main thread becomes `root`, its branches hang below. */
+function remapInto(child: Conversation, root: Branch): Sets {
+  return {
+    branches: [
+      root,
+      ...child.branches.filter((b) => b.id !== MAIN).map((b) => (b.parentBranchId === MAIN ? { ...b, parentBranchId: root.id } : b)),
+    ],
+    messages: child.messages.map((m) => (m.branchId === MAIN ? { ...m, branchId: root.id } : m)),
+  };
+}
+
+/** Attach `child` to `host` as a branch column that forks from message `forkMsgId`. */
+export function linkAsBranch(host: Conversation, child: Conversation, forkMsgId: string): Conversation {
+  const fork = host.messages.find((m) => m.id === forkMsgId);
+  if (!fork) throw new Error('Το μήνυμα-πηγή δεν βρέθηκε.');
+  const rootId = `link:${child.externalId ?? child.id}`;
+  if (host.branches.some((b) => b.id === rootId)) throw new Error('Η συζήτηση είναι ήδη συνδεδεμένη εδώ.');
+  const root: Branch = {
+    id: rootId,
+    parentBranchId: fork.branchId,
+    forkMsgId,
+    title: child.title,
+    // linking time (and always newer than its siblings) keeps existing branch labels stable
+    createdAt: Math.max(Date.now(), ...host.branches.map((b) => b.createdAt + 1)),
+    externalId: child.externalId,
+    source: child.source,
+    url: child.url,
+  };
+  const sets = remapInto(child, root);
+  return { ...host, branches: [...host.branches, ...sets.branches], messages: [...host.messages, ...sets.messages], updatedAt: Date.now() };
+}
+
+/** A conversation that is already linked as a branch was captured again: update that branch in place. */
+export function mergeIntoLinked(host: Conversation, rootId: string, incoming: Conversation): Conversation {
+  const root = host.branches.find((b) => b.id === rootId);
+  if (!root) return host;
+  const ids = subtreeIds(host.branches, rootId);
+  const merged = mergeSets(
+    { branches: host.branches.filter((b) => ids.has(b.id)), messages: host.messages.filter((m) => ids.has(m.branchId)) },
+    remapInto(incoming, root),
+    rootId,
+  );
+  return {
+    ...host,
+    branches: [...host.branches.filter((b) => !ids.has(b.id)), ...merged.branches],
+    messages: [...host.messages.filter((m) => !ids.has(m.branchId)), ...merged.messages],
     updatedAt: Date.now(),
   };
+}
+
+/** Turn a linked branch column back into a standalone conversation. */
+export function unlinkBranch(host: Conversation, rootId: string): { host: Conversation; child: Conversation } {
+  const root = host.branches.find((b) => b.id === rootId);
+  if (!root) throw new Error('Η διακλάδωση δεν βρέθηκε.');
+  const ids = subtreeIds(host.branches, rootId);
+  const now = Date.now();
+  const child: Conversation = {
+    id: uid(),
+    title: root.title || 'Συζήτηση',
+    source: root.source ?? host.source,
+    url: root.url,
+    externalId: root.externalId,
+    createdAt: root.createdAt,
+    updatedAt: now,
+    branches: host.branches
+      .filter((b) => ids.has(b.id))
+      .map((b) =>
+        b.id === rootId
+          ? { id: MAIN, parentBranchId: null, forkMsgId: null, title: 'Κύρια συζήτηση', createdAt: b.createdAt }
+          : b.parentBranchId === rootId
+            ? { ...b, parentBranchId: MAIN }
+            : b,
+      ),
+    messages: host.messages.filter((m) => ids.has(m.branchId)).map((m) => (m.branchId === rootId ? { ...m, branchId: MAIN } : m)),
+  };
+  return {
+    child,
+    host: {
+      ...host,
+      branches: host.branches.filter((b) => !ids.has(b.id)),
+      messages: host.messages.filter((m) => !ids.has(m.branchId)),
+      updatedAt: now,
+    },
+  };
+}
+
+export interface LinkTo {
+  convId: string;
+  forkMsgId: string;
+}
+export interface Incoming {
+  conv: Conversation;
+  linkTo?: LinkTo;
+}
+
+/**
+ * Route captures from the extension:
+ *  1. same externalId as a standalone conversation -> update it
+ *  2. already linked as a branch somewhere        -> update that branch
+ *  3. extension asked to attach it to a message    -> link as branch
+ *  4. otherwise                                    -> new conversation
+ */
+export function applyImports(convs: Conversation[], items: Incoming[]): { convs: Conversation[]; activeId: string | null } {
+  let next = convs;
+  let activeId: string | null = null;
+  for (const { conv: inc, linkTo } of items) {
+    const ext = inc.externalId;
+    const same = ext ? next.findIndex((c) => c.externalId === ext) : -1;
+    if (same >= 0) {
+      next = next.map((c, j) => (j === same ? mergeImported(c, inc) : c));
+      activeId = next[same].id;
+      continue;
+    }
+    const hostIdx = ext ? next.findIndex((c) => c.branches.some((b) => b.externalId === ext)) : -1;
+    if (hostIdx >= 0) {
+      const rootId = next[hostIdx].branches.find((b) => b.externalId === ext)!.id;
+      next = next.map((c, j) => (j === hostIdx ? mergeIntoLinked(c, rootId, inc) : c));
+      activeId = next[hostIdx].id;
+      continue;
+    }
+    if (linkTo) {
+      const h = next.findIndex((c) => c.id === linkTo.convId && c.messages.some((m) => m.id === linkTo.forkMsgId));
+      if (h >= 0) {
+        try {
+          const merged = linkAsBranch(next[h], inc, linkTo.forkMsgId);
+          next = next.map((c, j) => (j === h ? merged : c));
+          activeId = next[h].id;
+          continue;
+        } catch {
+          /* fall through to a standalone conversation */
+        }
+      }
+    }
+    next = [inc, ...next];
+    activeId = inc.id;
+  }
+  return { convs: next, activeId };
 }

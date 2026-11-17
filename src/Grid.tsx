@@ -9,6 +9,7 @@ export interface Actions {
   addBranch(forkMsgId: string): void;
   renameBranch(id: string): void;
   deleteBranch(id: string): void;
+  unlinkBranch(id: string): void;
 }
 
 interface GridProps {
@@ -41,6 +42,19 @@ export function Grid({ conv, open, toggle, query, actions }: GridProps) {
           {isMain ? `Κύρια συζήτηση · ${conv.source}` : `Διακλάδωση από #${from ?? '?'}`}
           {!isMain && (
             <>
+              {col.branch.externalId && (
+                <>
+                  <span title="Συνδεδεμένη συζήτηση">🔗</span>
+                  {col.branch.url && /^https?:\/\//.test(col.branch.url) && (
+                    <a className="ico" href={col.branch.url} target="_blank" rel="noreferrer" title="Άνοιγμα στην πηγή">
+                      ↗
+                    </a>
+                  )}
+                  <button className="ico" title="Να γίνει ξεχωριστή συζήτηση" onClick={() => actions.unlinkBranch(col.branch.id)}>
+                    ⇱
+                  </button>
+                </>
+              )}
               <button className="ico" title="Μετονομασία" onClick={() => actions.renameBranch(col.branch.id)}>
                 ✎
               </button>

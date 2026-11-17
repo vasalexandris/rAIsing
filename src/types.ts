@@ -18,6 +18,10 @@ export interface Branch {
   forkMsgId: string | null;
   title: string;
   createdAt: number;
+  /** set when this column is a whole external conversation that was linked here as a branch */
+  externalId?: string;
+  source?: string;
+  url?: string;
 }
 
 export interface Conversation {
