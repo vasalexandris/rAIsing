@@ -16,9 +16,9 @@
 
 Τα δεδομένα αποθηκεύονται στο IndexedDB του browser σου, χωρίς server.
 
-## Extension για claude.ai και Gemini
+## Extension για claude.ai, Gemini και GLM
 
-Στο live site (αριστερά, «Extension για claude.ai») υπάρχει το `raising-extension.zip` με οδηγίες εγκατάστασης. Σε κάθε συζήτηση στο claude.ai ή στο gemini.google.com εμφανίζεται κουμπί **⬆ rAIsing**: στέλνει ολόκληρο το δέντρο της συζήτησης (και τις διακλαδώσεις από edit/retry — μόνο στο claude.ai· το Gemini δίνει γραμμική συζήτηση) στο rAIsing. Αν στείλεις ξανά την ίδια συζήτηση, ενημερώνεται αντί να διπλασιαστεί και κρατούνται οι τοπικές σου προσθήκες.
+Στο live site (αριστερά, «Extension για claude.ai») υπάρχει το `raising-extension.zip` με οδηγίες εγκατάστασης. Σε κάθε συζήτηση στο claude.ai, gemini.google.com ή chat.z.ai (GLM) εμφανίζεται κουμπί **⬆ rAIsing**: στέλνει ολόκληρο το δέντρο της συζήτησης (και τις διακλαδώσεις από edit/retry — μόνο στο claude.ai· το Gemini δίνει γραμμική συζήτηση) στο rAIsing. Αν στείλεις ξανά την ίδια συζήτηση, ενημερώνεται αντί να διπλασιαστεί και κρατούνται οι τοπικές σου προσθήκες.
 
 Χρησιμοποιεί το εσωτερικό (μη τεκμηριωμένο) API που φορτώνει το ίδιο το claude.ai, με τη δική σου σύνδεση, και δεν στέλνει τίποτα σε εξωτερικό server. Μπορεί να αλλάξει χωρίς ειδοποίηση.
 
@@ -39,7 +39,8 @@
 - [x] Εισαγωγή από Claude Code (JSONL sessions)
 - [x] Browser extension για claude.ai
 - [x] Extension για Gemini (γραμμικό, από το DOM)
-- [ ] Extension για GLM, ChatGPT
+- [x] Extension για GLM (chat.z.ai, με διακλαδώσεις)
+- [ ] Extension για ChatGPT
 - [ ] Σύνδεση με Google και cloud αποθήκευση
 - [ ] Ενσωματωμένη ΑΙ (βοηθός prompts και αναζήτηση στη συζήτηση)
 

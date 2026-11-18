@@ -1,14 +1,14 @@
 {
   "manifest_version": 3,
-  "name": "rAIsing – σύνδεση με claude.ai και Gemini",
-  "version": "0.3.0",
-  "description": "Στείλε συζητήσεις από claude.ai και Gemini (με τις διακλαδώσεις τους) στο rAIsing.",
+  "name": "rAIsing – σύνδεση με claude.ai, Gemini και GLM",
+  "version": "0.4.0",
+  "description": "Στείλε συζητήσεις από claude.ai, Gemini και GLM (με τις διακλαδώσεις τους) στο rAIsing.",
   "permissions": ["storage", "unlimitedStorage"],
   "host_permissions": ["https://vasalexandris.github.io/rAIsing/*"],
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     {
-      "matches": ["https://claude.ai/*", "https://gemini.google.com/*"],
+      "matches": ["https://claude.ai/*", "https://gemini.google.com/*", "https://chat.z.ai/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
     },

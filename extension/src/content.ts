@@ -1,6 +1,7 @@
 import type { Conversation } from '../../src/types';
 import { captureCurrent, conversationIdFromUrl } from './claudeApi';
 import { captureGemini, geminiId } from './sites/gemini';
+import { glmId, captureGlm } from './sites/glm';
 
 // One adapter per site: how to recognise an open conversation and how to read it.
 interface Adapter {
@@ -10,6 +11,7 @@ interface Adapter {
 const ADAPTERS: Record<string, Adapter> = {
   'claude.ai': { id: conversationIdFromUrl, capture: captureCurrent },
   'gemini.google.com': { id: geminiId, capture: captureGemini },
+  'chat.z.ai': { id: glmId, capture: captureGlm },
 };
 const adapter = ADAPTERS[location.hostname];
 
