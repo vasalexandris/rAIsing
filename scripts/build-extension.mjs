@@ -6,7 +6,7 @@ mkdirSync('extension/dist', { recursive: true });
 
 await build({
   entryPoints: {
-    claude: 'extension/src/claude.ts',
+    content: 'extension/src/content.ts',
     bridge: 'extension/src/bridge.ts',
     background: 'extension/src/background.ts',
   },

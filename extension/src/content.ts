@@ -1,5 +1,17 @@
 import type { Conversation } from '../../src/types';
 import { captureCurrent, conversationIdFromUrl } from './claudeApi';
+import { captureGemini, geminiId } from './sites/gemini';
+
+// One adapter per site: how to recognise an open conversation and how to read it.
+interface Adapter {
+  id(url: string): string | null;
+  capture(): Promise<Conversation>;
+}
+const ADAPTERS: Record<string, Adapter> = {
+  'claude.ai': { id: conversationIdFromUrl, capture: captureCurrent },
+  'gemini.google.com': { id: geminiId, capture: captureGemini },
+};
+const adapter = ADAPTERS[location.hostname];
 
 /** Light index of the user's rAIsing conversations, pushed by the app (see bridge.ts). */
 interface IndexConv {
@@ -12,6 +24,9 @@ interface IndexConv {
 }
 type LinkTo = { convId: string; forkMsgId: string };
 
+if (adapter) init();
+
+function init() {
 // Floating "send to rAIsing" button, only visible on a chat page. Shadow DOM keeps claude.ai's CSS out.
 const host = document.createElement('div');
 host.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483647;';
@@ -42,7 +57,7 @@ document.documentElement.appendChild(host);
 
 const LABEL = '⬆ rAIsing';
 const sync = () => {
-  host.style.display = conversationIdFromUrl() ? '' : 'none';
+  host.style.display = adapter.id(location.href) ? '' : 'none';
 };
 setInterval(sync, 1000);
 sync();
@@ -113,7 +128,7 @@ btn.addEventListener('click', async () => {
   btn.textContent = '…';
   let label = LABEL;
   try {
-    const conv = (await captureCurrent()) as Conversation & { linkTo?: LinkTo };
+    const conv = (await adapter.capture()) as Conversation & { linkTo?: LinkTo };
     const { pending = [], index = [] } = (await chrome.storage.local.get(['pending', 'index'])) as {
       pending?: Conversation[];
       index?: IndexConv[];
@@ -145,3 +160,4 @@ btn.addEventListener('click', async () => {
     btn.disabled = false;
   }, 3500);
 });
+}
